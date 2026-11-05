@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hanzi Stroke Editor</title>
+<script src="https://cdn.jsdelivr.net/npm/hanzi-writer@3/dist/hanzi-writer.min.js"></script>
+<style>
+  :root { color-scheme: light; font-family: system-ui, sans-serif; }
+  body { margin: 0; padding: 24px; background: #f6f7fb; color: #172033; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 18px 0 10px; }
+  .layout { display: grid; grid-template-columns: 400px 1fr; gap: 24px; max-width: 1200px; }
+  @media (max-width: 950px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: white; border: 1px solid #e3e6ef; border-radius: 14px; padding: 16px; box-shadow: 0 2px 10px #00000008; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid #ccd2e0; border-radius: 8px; font-size: 16px; }
+  button { border: 0; border-radius: 8px; padding: 9px 13px; font-weight: 600; cursor: pointer; background: #2563eb; color: white; }
+  button.secondary { background: #eef1f8; color: #24304d; }
+  button.danger { background: #fee2e2; color: #991b1b; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  input[type=range] { width: 100%; }
+  input[type=file] { font-size: 13px; }
+  .value { min-width: 58px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  #editor { width: 100%; aspect-ratio: 1; border: 1px solid #e3e6ef; border-radius: 12px; background: white; }
+  #preview { width: 280px; height: 280px; margin: auto; }
+  .stroke-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; margin-top: 10px; }
+  .stroke-btn { aspect-ratio: 1; border-radius: 8px; border: 1px solid #d8deeb; background: #f8fafc; color: #334155; font-weight: 700; }
+  .stroke-btn.active { background: #2563eb; border-color: #2563eb; color: white; }
+  .hint { font-size: 12px; color: #667085; margin-top: 8px; }
+  .status { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .error { color: #b91c1c; }
+  .hidden { display: none; }
+  .divider { height: 1px; background: #e6e9f2; margin: 18px 0; }
+</style>
+</head>
+<body>
+<h1>Hanzi Stroke Editor</h1>
+
+<div class="layout">
+  <section class="card">
+    <h2 style="margin-top:0">Load character</h2>
+
+    <label for="charInput">Character from Hanzi Writer CDN</label>
+    <div class="row">
+      <input id="charInput" type="text" value="好" maxlength="1" />
+      <button id="loadBtn">Load</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <label for="jsonPathInput">Load JSON from relative path</label>
+    <div class="row">
+      <input id="jsonPathInput" type="text" placeholder="e.g. data/好-edited.json" />
+      <button id="loadJsonPathBtn">Load</button>
+    </div>
+    <div class="hint">
+      The path is relative to this HTML file. Serve the folder locally, for example with
+      <code>npx serve .</code>, because browsers restrict <code>fetch()</code> from
+      <code>file://</code> pages.
+    </div>
+
+    <label for="jsonFileInput">Or choose a local JSON file</label>
+    <input id="jsonFileInput" type="file" accept=".json,application/json" />
+
+    <div id="editorPanel" class="hidden">
+      <div class="divider"></div>
+
+      <label>Strokes</label>
+      <div id="strokeList" class="stroke-list"></div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="moveUp" class="secondary">Move earlier ↑</button>
+        <button id="moveDown" class="secondary">Move later ↓</button>
+      </div>
+      <div class="hint">
+        Select a stroke, then change when it is written. Scale and Move apply to the stroke
+        currently selected at its new position.
+      </div>
+
+      <label>Scale X <span class="value" id="scaleXValue">1.00×</span></label>
+      <input id="scaleX" type="range" min="0.2" max="3" step="0.01" value="1" />
+
+      <label>Scale Y <span class="value" id="scaleYValue">1.00×</span></label>
+      <input id="scaleY" type="range" min="0.2" max="3" step="0.01" value="1" />
+
+      <label>Move horizontally <span class="value" id="dxValue">0</span></label>
+      <input id="dx" type="range" min="-400" max="400" step="1" value="0" />
+
+      <label>Move vertically <span class="value" id="dyValue">0</span></label>
+      <input id="dy" type="range" min="-400" max="400" step="1" value="0" />
+
+      <div class="row" style="margin-top:14px">
+        <button id="resetStroke" class="secondary">Reset stroke</button>
+        <button id="resetAll" class="danger">Reset all</button>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="downloadBtn">Download JSON</button>
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 style="margin-top:0">Editor</h2>
+    <svg id="editor" viewBox="0 0 1024 1024">
+      <!-- Hanzi Writer data uses an inverted Y axis; this displays it correctly. -->
+      <g id="strokeGroup" transform="scale(1, -1) translate(0, -900)"></g>
+    </svg>
+
+    <h2>Stroke-order preview</h2>
+    <div id="preview"></div>
+
+    <div class="row" style="justify-content:center;margin-top:10px">
+      <button id="animateBtn" class="secondary" disabled>Animate</button>
+      <button id="loopBtn" class="secondary" disabled>Loop: off</button>
+    </div>
+  </section>
+</div>
+
+<script>
+const CDN = 'https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0.1';
+const strokeGroup = document.getElementById('strokeGroup');
+const statusEl = document.getElementById('status');
+
+let currentCharacter = '好';
+let baseStrokes = [];   // Untransformed outline path for the stroke at each current position
+let baseMedians = [];   // Untransformed median for the stroke at each current position
+let strokes = [];       // Edited outline paths
+let medians = [];       // Edited medians
+let selected = -1;
+let writer = null;
+let looping = false;
+
+const els = {
+  charInput: document.getElementById('charInput'),
+  loadBtn: document.getElementById('loadBtn'),
+  jsonPathInput: document.getElementById('jsonPathInput'),
+  loadJsonPathBtn: document.getElementById('loadJsonPathBtn'),
+  jsonFileInput: document.getElementById('jsonFileInput'),
+  editorPanel: document.getElementById('editorPanel'),
+  strokeList: document.getElementById('strokeList'),
+  moveUp: document.getElementById('moveUp'),
+  moveDown: document.getElementById('moveDown'),
+  scaleX: document.getElementById('scaleX'),
+  scaleY: document.getElementById('scaleY'),
+  dx: document.getElementById('dx'),
+  dy: document.getElementById('dy'),
+  scaleXValue: document.getElementById('scaleXValue'),
+  scaleYValue: document.getElementById('scaleYValue'),
+  dxValue: document.getElementById('dxValue'),
+  dyValue: document.getElementById('dyValue'),
+  resetStroke: document.getElementById('resetStroke'),
+  resetAll: document.getElementById('resetAll'),
+  downloadBtn: document.getElementById('downloadBtn'),
+  preview: document.getElementById('preview'),
+  animateBtn: document.getElementById('animateBtn'),
+  loopBtn: document.getElementById('loopBtn'),
+};
+
+function setStatus(message, isError = false) {
+  statusEl.textContent = message || '';
+  statusEl.className = 'status' + (isError ? ' error' : '');
+}
+
+function validateCharacterData(data) {
+  if (!data || !Array.isArray(data.strokes) || !Array.isArray(data.medians)) {
+    throw new Error('Invalid JSON: expected "strokes" and "medians" arrays.');
+  }
+
+  if (data.strokes.length !== data.medians.length) {
+    throw new Error(
+      `Invalid JSON: strokes (${data.strokes.length}) and medians ` +
+      `(${data.medians.length}) must have the same length.`
+    );
+  }
+}
+
+function useCharacterData(data, character) {
+  validateCharacterData(data);
+
+  currentCharacter = character || currentCharacter;
+  baseStrokes = [...data.strokes];
+  baseMedians = data.medians.map(points => points.map(point => [...point]));
+  strokes = [...data.strokes];
+  medians = data.medians.map(points => points.map(point => [...point]));
+  selected = strokes.length ? 0 : -1;
+
+  els.editorPanel.classList.remove('hidden');
+  renderStrokeButtons();
+  selectStroke(selected);
+  rebuildPreview();
+
+  setStatus(`Loaded ${strokes.length} strokes.`);
+}
+
+async function loadFromCdn() {
+  const character = els.charInput.value.trim();
+
+  if (!character) {
+    setStatus('Enter one Chinese character.', true);
+    return;
+  }
+
+  setStatus('Loading character from Hanzi Writer CDN…');
+  els.editorPanel.classList.add('hidden');
+
+  try {
+    const response = await fetch(`${CDN}/${encodeURIComponent(character)}.json`);
+    if (!response.ok) throw new Error(`Character "${character}" was not found.`);
+
+    useCharacterData(await response.json(), character);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function loadFromRelativePath() {
+  const relativePath = els.jsonPathInput.value.trim();
+
+  if (!relativePath) {
+    setStatus('Enter a relative JSON path.', true);
+    return;
+  }
+
+  setStatus(`Loading ${relativePath}…`);
+  els.editorPanel.classList.add('hidden');
+
+  try {
+    const response = await fetch(relativePath);
+    if (!response.ok) {
+      throw new Error(`Could not load "${relativePath}" (HTTP ${response.status}).`);
+    }
+
+    const data = await response.json();
+    const filename = relativePath.split('/').pop() || 'character';
+    useCharacterData(data, filename.replace(/\.json$/i, ''));
+  } catch (error) {
+    setStatus(
+      error.message +
+      ' If this page was opened with file://, serve its folder instead, for example: npx serve .',
+      true
+    );
+  }
+}
+
+async function loadFromFile(file) {
+  if (!file) return;
+
+  setStatus(`Loading ${file.name}…`);
+  els.editorPanel.classList.add('hidden');
+
+  try {
+    const data = JSON.parse(await file.text());
+    useCharacterData(data, file.name.replace(/\.json$/i, ''));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function transformPoint([x, y], cx, cy, sx, sy, dx, dy) {
+  return [
+    (x - cx) * sx + cx + dx,
+    (y - cy) * sy + cy - dy, // UI “down” is negative Y in Hanzi data space
+  ];
+}
+
+function transformPath(path, cx, cy, sx, sy, dx, dy) {
+  const tokens = path.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || [];
+  const output = [];
+  let i = 0;
+  let command = '';
+
+  const nextNumber = () => parseFloat(tokens[i++]);
+
+  const nextPoint = () => transformPoint(
+    [nextNumber(), nextNumber()],
+    cx, cy, sx, sy, dx, dy
+  ).map(value => Math.round(value * 100) / 100).join(' ');
+
+  while (i < tokens.length) {
+    if (/[a-zA-Z]/.test(tokens[i])) {
+      command = tokens[i++];
+      output.push(command);
+      continue;
+    }
+
+    const upper = command.toUpperCase();
+
+    if (upper === 'A') {
+      output.push(tokens.slice(i, i + 7).join(' '));
+      i += 7;
+    } else if (upper === 'H') {
+      const x = (nextNumber() - cx) * sx + cx + dx;
+      output.push(String(Math.round(x * 100) / 100));
+    } else if (upper === 'V') {
+      const y = (nextNumber() - cy) * sy + cy - dy;
+      output.push(String(Math.round(y * 100) / 100));
+    } else if (upper === 'Z') {
+      // No coordinates.
+    } else if (['M', 'L', 'T'].includes(upper)) {
+      output.push(nextPoint());
+    } else if (['Q', 'S'].includes(upper)) {
+      output.push(nextPoint(), nextPoint());
+    } else if (upper === 'C') {
+      output.push(nextPoint(), nextPoint(), nextPoint());
+    } else {
+      output.push(tokens[i++]);
+    }
+  }
+
+  return output.join(' ');
+}
+
+function getStrokeBounds(path) {
+  const numbers = (path.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+  const xs = [];
+  const ys = [];
+
+  for (let i = 0; i + 1 < numbers.length; i += 2) {
+    xs.push(numbers[i]);
+    ys.push(numbers[i + 1]);
+  }
+
+  if (!xs.length) return { cx: 512, cy: 512 };
+
+  return {
+    cx: (Math.min(...xs) + Math.max(...xs)) / 2,
+    cy: (Math.min(...ys) + Math.max(...ys)) / 2,
+  };
+}
+
+function applyCurrentTransform() {
+  if (selected < 0 || !baseStrokes[selected]) return;
+
+  const sx = parseFloat(els.scaleX.value);
+  const sy = parseFloat(els.scaleY.value);
+  const dx = parseFloat(els.dx.value);
+  const dy = parseFloat(els.dy.value);
+
+  // Important: transform the base stroke currently at this position,
+  // not the stroke that originally occupied this index.
+  const sourcePath = baseStrokes[selected];
+  const { cx, cy } = getStrokeBounds(sourcePath);
+
+  strokes[selected] = transformPath(sourcePath, cx, cy, sx, sy, dx, dy);
+
+  medians[selected] = baseMedians[selected].map(point =>
+    transformPoint(point, cx, cy, sx, sy, dx, dy)
+      .map(value => Math.round(value * 100) / 100)
+  );
+
+  els.scaleXValue.textContent = sx.toFixed(2) + '×';
+  els.scaleYValue.textContent = sy.toFixed(2) + '×';
+  els.dxValue.textContent = dx;
+  els.dyValue.textContent = dy;
+
+  renderEditor();
+  rebuildPreview();
+}
+
+function renderEditor() {
+  strokeGroup.innerHTML = '';
+
+  strokes.forEach((pathData, index) => {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathData);
+    path.setAttribute('fill', index === selected ? '#2563eb' : '#111827');
+    path.setAttribute('fill-opacity', index === selected ? '0.88' : '0.74');
+    path.setAttribute('stroke', index === selected ? '#1d4ed8' : 'none');
+    path.setAttribute('stroke-width', index === selected ? '6' : '0');
+    path.style.cursor = 'pointer';
+    path.addEventListener('click', () => selectStroke(index));
+    strokeGroup.appendChild(path);
+  });
+
+  if (selected >= 0 && medians[selected]) {
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', medians[selected].map(point => point.join(',')).join(' '));
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke', '#f59e0b');
+    polyline.setAttribute('stroke-width', '8');
+    polyline.setAttribute('stroke-linecap', 'round');
+    polyline.setAttribute('stroke-linejoin', 'round');
+    polyline.setAttribute('pointer-events', 'none');
+    strokeGroup.appendChild(polyline);
+  }
+}
+
+function renderStrokeButtons() {
+  els.strokeList.innerHTML = '';
+
+  strokes.forEach((_, index) => {
+    const button = document.createElement('button');
+    button.className = 'stroke-btn' + (index === selected ? ' active' : '');
+    button.textContent = index + 1;
+    button.title = `Stroke ${index + 1}`;
+    button.addEventListener('click', () => selectStroke(index));
+    els.strokeList.appendChild(button);
+  });
+
+  els.moveUp.disabled = selected <= 0;
+  els.moveDown.disabled = selected < 0 || selected >= strokes.length - 1;
+}
+
+function selectStroke(index) {
+  selected = index;
+
+  els.scaleX.value = 1;
+  els.scaleY.value = 1;
+  els.dx.value = 0;
+  els.dy.value = 0;
+
+  els.scaleXValue.textContent = '1.00×';
+  els.scaleYValue.textContent = '1.00×';
+  els.dxValue.textContent = '0';
+  els.dyValue.textContent = '0';
+
+  renderStrokeButtons();
+  renderEditor();
+}
+
+function moveStroke(offset) {
+  if (selected < 0) return;
+
+  const target = selected + offset;
+  if (target < 0 || target >= strokes.length) return;
+
+  // Keep edited data and its untransformed base data aligned by position.
+  [strokes[selected], strokes[target]] = [strokes[target], strokes[selected]];
+  [medians[selected], medians[target]] = [medians[target], medians[selected]];
+  [baseStrokes[selected], baseStrokes[target]] = [baseStrokes[target], baseStrokes[selected]];
+  [baseMedians[selected], baseMedians[target]] = [baseMedians[target], baseMedians[selected]];
+
+  selected = target;
+
+  renderStrokeButtons();
+  renderEditor();
+  rebuildPreview();
+}
+
+function rebuildPreview() {
+  els.preview.innerHTML = '';
+
+  writer = HanziWriter.create(els.preview, currentCharacter, {
+    width: 280,
+    height: 280,
+    padding: 5,
+    showOutline: true,
+    strokeAnimationSpeed: 1,
+    delayBetweenStrokes: 180,
+    charDataLoader: (character, onComplete) => {
+      onComplete({
+        strokes: [...strokes],
+        medians: medians.map(points => points.map(point => [...point])),
+      });
+    },
+  });
+
+  els.animateBtn.disabled = false;
+  els.loopBtn.disabled = false;
+
+  if (looping) writer.loopCharacterAnimation();
+}
+
+function downloadJSON() {
+  const output = {
+    strokes,
+    medians,
+  };
+
+  const blob = new Blob([JSON.stringify(output, null, 2)], {
+    type: 'application/json',
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${currentCharacter}-edited.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+els.loadBtn.addEventListener('click', loadFromCdn);
+
+els.charInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') loadFromCdn();
+});
+
+els.loadJsonPathBtn.addEventListener('click', loadFromRelativePath);
+
+els.jsonPathInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') loadFromRelativePath();
+});
+
+els.jsonFileInput.addEventListener('change', event => {
+  loadFromFile(event.target.files[0]);
+});
+
+[els.scaleX, els.scaleY, els.dx, els.dy].forEach(input => {
+  input.addEventListener('input', applyCurrentTransform);
+});
+
+els.moveUp.addEventListener('click', () => moveStroke(-1));
+els.moveDown.addEventListener('click', () => moveStroke(1));
+
+els.resetStroke.addEventListener('click', () => {
+  if (selected < 0) return;
+
+  strokes[selected] = baseStrokes[selected];
+  medians[selected] = baseMedians[selected].map(point => [...point]);
+
+  selectStroke(selected);
+  rebuildPreview();
+});
+
+els.resetAll.addEventListener('click', () => {
+  strokes = [...baseStrokes];
+  medians = baseMedians.map(points => points.map(point => [...point]));
+
+  selectStroke(0);
+  rebuildPreview();
+});
+
+els.downloadBtn.addEventListener('click', downloadJSON);
+
+els.animateBtn.addEventListener('click', () => {
+  if (writer) writer.animateCharacter();
+});
+
+els.loopBtn.addEventListener('click', () => {
+  looping = !looping;
+  els.loopBtn.textContent = looping ? 'Loop: on' : 'Loop: off';
+
+  if (!writer) return;
+
+  if (looping) {
+    writer.loopCharacterAnimation();
+  } else {
+    writer.hideCharacter();
+    writer.showCharacter();
+  }
+});
+
+loadFromCdn();
+</script>
+</body>
+</html>
