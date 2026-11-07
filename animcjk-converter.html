@@ -143,7 +143,7 @@
             </div>
             <div class="info-pills">
                 <span class="pill" id="strokeCountPill">0 Strokes</span>
-                <span class="pill" id="mediansPill">0 Medians</span>
+                <span class="pill" id="radStrokesPill">0 RadStrokes</span>
             </div>
         </div>
 
@@ -162,7 +162,6 @@
 </div>
 
 <script>
-// Cache for dictionary and graphics text files
 const fileCache = {};
 
 async function fetchFile(url) {
@@ -176,6 +175,31 @@ async function fetchFile(url) {
         }
     } catch(e) {}
     return null;
+}
+
+function parseRadStrokes(dictEntry, totalStrokes) {
+    // 1. Direct radStrokes array if available
+    if (Array.isArray(dictEntry?.radStrokes)) {
+        return dictEntry.radStrokes;
+    }
+    
+    // 2. Derive radStrokes indices from radicalStrokes/radicalIndexes
+    if (Array.isArray(dictEntry?.radicalStrokes)) {
+        return dictEntry.radicalStrokes.map(n => Number(n) - 1).filter(n => n >= 0 && n < totalStrokes);
+    }
+    
+    // 3. Fallback: Parse radical match indices from character decomposition
+    if (dictEntry?.matches) {
+        const radIndices = [];
+        dictEntry.matches.forEach((match, idx) => {
+            if (Array.isArray(match) && match.includes('radical')) {
+                radIndices.push(idx);
+            }
+        });
+        if (radIndices.length > 0) return radIndices;
+    }
+
+    return [];
 }
 
 async function convertCharacter() {
@@ -202,13 +226,11 @@ async function convertCharacter() {
     let dictionaryData = null;
 
     for (const r of regions) {
-        // Fetch SVG
         if (!svgText) {
             const svgUrl = `https://raw.githubusercontent.com/parsimonhi/animCJK/master/svgs${r}/${decCode}.svg`;
             svgText = await fetchFile(svgUrl);
         }
 
-        // Fetch Graphics File (contains medians and stroke paths)
         if (!graphicsData) {
             const gfxUrl = `https://raw.githubusercontent.com/parsimonhi/animCJK/master/graphics${r}.txt`;
             const text = await fetchFile(gfxUrl);
@@ -218,7 +240,6 @@ async function convertCharacter() {
             }
         }
 
-        // Fetch Dictionary File (contains radical info)
         if (!dictionaryData) {
             const dictUrl = `https://raw.githubusercontent.com/parsimonhi/animCJK/master/dictionary${r}.txt`;
             const text = await fetchFile(dictUrl);
@@ -237,7 +258,6 @@ async function convertCharacter() {
         return;
     }
 
-    // Render SVG Preview
     if (svgText) {
         previewEl.innerHTML = svgText;
         const svgEl = previewEl.querySelector('svg');
@@ -247,7 +267,6 @@ async function convertCharacter() {
         }
     }
 
-    // Extract strokes
     let strokes = graphicsData?.strokes || [];
     if (strokes.length === 0 && svgText) {
         const parser = new DOMParser();
@@ -258,15 +277,15 @@ async function convertCharacter() {
         });
     }
 
-    // Extract medians & radical
     const medians = graphicsData?.medians || [];
-    const radical = dictionaryData?.radical || undefined;
+    const radStrokes = parseRadStrokes(dictionaryData, strokes.length);
 
+    // Exact Hanzi Writer output schema
     const hanziData = {
         "character": char,
         "strokes": strokes,
         "medians": medians,
-        "radical": radical
+        "radStrokes": radStrokes
     };
 
     outputEl.value = JSON.stringify(hanziData, null, 2);
@@ -274,7 +293,7 @@ async function convertCharacter() {
     statusEl.textContent = "Ready";
 
     document.getElementById('strokeCountPill').textContent = `${strokes.length} Strokes`;
-    document.getElementById('mediansPill').textContent = `${medians.length} Medians`;
+    document.getElementById('radStrokesPill').textContent = `${radStrokes.length} RadStrokes`;
 }
 
 function copyJSON() {
