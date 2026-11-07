@@ -18,6 +18,7 @@
   button { border: 0; border-radius: 8px; padding: 9px 13px; font-weight: 600; cursor: pointer; background: #2563eb; color: white; }
   button.secondary { background: #eef1f8; color: #24304d; }
   button.danger { background: #fee2e2; color: #991b1b; }
+  button.radical-active { background: #dc2626; color: white; }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .row { display: flex; gap: 8px; align-items: center; }
   .row + .row { margin-top: 8px; }
@@ -29,11 +30,18 @@
   .stroke-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; margin-top: 10px; }
   .stroke-btn { aspect-ratio: 1; border-radius: 8px; border: 1px solid #d8deeb; background: #f8fafc; color: #334155; font-weight: 700; }
   .stroke-btn.active { background: #2563eb; border-color: #2563eb; color: white; }
+  .stroke-btn.radical { background: #dc2626; border-color: #dc2626; color: white; }
+  .stroke-btn.active.radical { background: #7f1d1d; border-color: #7f1d1d; }
   .hint { font-size: 12px; color: #667085; margin-top: 8px; }
   .status { font-size: 13px; margin-top: 10px; min-height: 18px; }
   .error { color: #b91c1c; }
   .hidden { display: none; }
   .divider { height: 1px; background: #e6e9f2; margin: 18px 0; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: #475569; margin-top: 8px; }
+  .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .legend .normal::before { background: #111827; }
+  .legend .radical::before { background: #dc2626; }
+  .legend .selected::before { background: #2563eb; }
 </style>
 </head>
 <body>
@@ -74,10 +82,18 @@
       <div class="row" style="margin-top:10px">
         <button id="moveUp" class="secondary">Move earlier ↑</button>
         <button id="moveDown" class="secondary">Move later ↓</button>
+        <button id="toggleRadical" class="secondary">Toggle radical</button>
       </div>
+
+      <div class="legend">
+        <span class="normal">Normal stroke</span>
+        <span class="radical">Radical stroke</span>
+        <span class="selected">Selected</span>
+      </div>
+
       <div class="hint">
-        Select a stroke, then change when it is written. Scale and Move apply to the stroke
-        currently selected at its new position.
+        Select a stroke, then use <strong>Toggle radical</strong> to include or exclude it from
+        the radical. Stroke order, scale, and position can also be edited.
       </div>
 
       <label>Scale X <span class="value" id="scaleXValue">1.00×</span></label>
@@ -127,11 +143,16 @@ const CDN = 'https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0.1';
 const strokeGroup = document.getElementById('strokeGroup');
 const statusEl = document.getElementById('status');
 
+const NORMAL_COLOR = '#111827';
+const RADICAL_COLOR = '#dc2626';
+const SELECTED_COLOR = '#2563eb';
+
 let currentCharacter = '好';
-let baseStrokes = [];   // Untransformed outline path for the stroke at each current position
-let baseMedians = [];   // Untransformed median for the stroke at each current position
-let strokes = [];       // Edited outline paths
-let medians = [];       // Edited medians
+let baseStrokes = [];
+let baseMedians = [];
+let strokes = [];
+let medians = [];
+let radStrokes = [];
 let selected = -1;
 let writer = null;
 let looping = false;
@@ -146,6 +167,7 @@ const els = {
   strokeList: document.getElementById('strokeList'),
   moveUp: document.getElementById('moveUp'),
   moveDown: document.getElementById('moveDown'),
+  toggleRadical: document.getElementById('toggleRadical'),
   scaleX: document.getElementById('scaleX'),
   scaleY: document.getElementById('scaleY'),
   dx: document.getElementById('dx'),
@@ -188,6 +210,7 @@ function useCharacterData(data, character) {
   baseMedians = data.medians.map(points => points.map(point => [...point]));
   strokes = [...data.strokes];
   medians = data.medians.map(points => points.map(point => [...point]));
+  radStrokes = Array.isArray(data.radStrokes) ? [...data.radStrokes] : [];
   selected = strokes.length ? 0 : -1;
 
   els.editorPanel.classList.remove('hidden');
@@ -195,7 +218,8 @@ function useCharacterData(data, character) {
   selectStroke(selected);
   rebuildPreview();
 
-  setStatus(`Loaded ${strokes.length} strokes.`);
+  const radicalCount = radStrokes.length;
+  setStatus(`Loaded ${strokes.length} strokes; ${radicalCount} radical stroke(s).`);
 }
 
 async function loadFromCdn() {
@@ -342,8 +366,6 @@ function applyCurrentTransform() {
   const dx = parseFloat(els.dx.value);
   const dy = parseFloat(els.dy.value);
 
-  // Important: transform the base stroke currently at this position,
-  // not the stroke that originally occupied this index.
   const sourcePath = baseStrokes[selected];
   const { cx, cy } = getStrokeBounds(sourcePath);
 
@@ -363,16 +385,32 @@ function applyCurrentTransform() {
   rebuildPreview();
 }
 
+function isRadicalStroke(index) {
+  return radStrokes.includes(index);
+}
+
 function renderEditor() {
   strokeGroup.innerHTML = '';
 
   strokes.forEach((pathData, index) => {
+    const isSelected = index === selected;
+    const isRadical = isRadicalStroke(index);
+
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', pathData);
-    path.setAttribute('fill', index === selected ? '#2563eb' : '#111827');
-    path.setAttribute('fill-opacity', index === selected ? '0.88' : '0.74');
-    path.setAttribute('stroke', index === selected ? '#1d4ed8' : 'none');
-    path.setAttribute('stroke-width', index === selected ? '6' : '0');
+
+    if (isSelected) {
+      path.setAttribute('fill', SELECTED_COLOR);
+      path.setAttribute('fill-opacity', '0.88');
+      path.setAttribute('stroke', '#1d4ed8');
+      path.setAttribute('stroke-width', '6');
+    } else {
+      path.setAttribute('fill', isRadical ? RADICAL_COLOR : NORMAL_COLOR);
+      path.setAttribute('fill-opacity', isRadical ? '0.88' : '0.74');
+      path.setAttribute('stroke', 'none');
+      path.setAttribute('stroke-width', '0');
+    }
+
     path.style.cursor = 'pointer';
     path.addEventListener('click', () => selectStroke(index));
     strokeGroup.appendChild(path);
@@ -395,16 +433,26 @@ function renderStrokeButtons() {
   els.strokeList.innerHTML = '';
 
   strokes.forEach((_, index) => {
+    const isSelected = index === selected;
+    const isRadical = isRadicalStroke(index);
+
     const button = document.createElement('button');
-    button.className = 'stroke-btn' + (index === selected ? ' active' : '');
+    button.className =
+      'stroke-btn' +
+      (isSelected ? ' active' : '') +
+      (isRadical ? ' radical' : '');
     button.textContent = index + 1;
-    button.title = `Stroke ${index + 1}`;
+    button.title = `Stroke ${index + 1}${isRadical ? ' (radical)' : ''}`;
     button.addEventListener('click', () => selectStroke(index));
     els.strokeList.appendChild(button);
   });
 
   els.moveUp.disabled = selected <= 0;
   els.moveDown.disabled = selected < 0 || selected >= strokes.length - 1;
+
+  const selectedIsRadical = selected >= 0 && isRadicalStroke(selected);
+  els.toggleRadical.textContent = selectedIsRadical ? 'Remove from radical' : 'Add to radical';
+  els.toggleRadical.classList.toggle('radical-active', selectedIsRadical);
 }
 
 function selectStroke(index) {
@@ -430,13 +478,43 @@ function moveStroke(offset) {
   const target = selected + offset;
   if (target < 0 || target >= strokes.length) return;
 
-  // Keep edited data and its untransformed base data aligned by position.
+  // Keep edited data, base data, and radical membership aligned by current position.
   [strokes[selected], strokes[target]] = [strokes[target], strokes[selected]];
   [medians[selected], medians[target]] = [medians[target], medians[selected]];
   [baseStrokes[selected], baseStrokes[target]] = [baseStrokes[target], baseStrokes[selected]];
   [baseMedians[selected], baseMedians[target]] = [baseMedians[target], baseMedians[selected]];
 
+  // Radical membership follows the stroke, not its old array position.
+  const selectedWasRadical = isRadicalStroke(selected);
+  const targetWasRadical = isRadicalStroke(target);
+
+  if (selectedWasRadical !== targetWasRadical) {
+    if (selectedWasRadical) {
+      radStrokes = radStrokes.map(index => index === selected ? target : index);
+    } else if (targetWasRadical) {
+      radStrokes = radStrokes.map(index => index === target ? selected : index);
+    }
+  }
+
   selected = target;
+
+  renderStrokeButtons();
+  renderEditor();
+  rebuildPreview();
+}
+
+function toggleRadical() {
+  if (selected < 0) return;
+
+  const index = radStrokes.indexOf(selected);
+
+  if (index === -1) {
+    radStrokes.push(selected);
+  } else {
+    radStrokes.splice(index, 1);
+  }
+
+  radStrokes.sort((a, b) => a - b);
 
   renderStrokeButtons();
   renderEditor();
@@ -451,12 +529,15 @@ function rebuildPreview() {
     height: 280,
     padding: 5,
     showOutline: true,
+    strokeColor: NORMAL_COLOR,
+    radicalColor: RADICAL_COLOR,
     strokeAnimationSpeed: 1,
     delayBetweenStrokes: 180,
     charDataLoader: (character, onComplete) => {
       onComplete({
         strokes: [...strokes],
         medians: medians.map(points => points.map(point => [...point])),
+        radStrokes: [...radStrokes],
       });
     },
   });
@@ -471,6 +552,7 @@ function downloadJSON() {
   const output = {
     strokes,
     medians,
+    radStrokes: [...radStrokes].sort((a, b) => a - b),
   };
 
   const blob = new Blob([JSON.stringify(output, null, 2)], {
@@ -507,6 +589,7 @@ els.jsonFileInput.addEventListener('change', event => {
 
 els.moveUp.addEventListener('click', () => moveStroke(-1));
 els.moveDown.addEventListener('click', () => moveStroke(1));
+els.toggleRadical.addEventListener('click', toggleRadical);
 
 els.resetStroke.addEventListener('click', () => {
   if (selected < 0) return;
